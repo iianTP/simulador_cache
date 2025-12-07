@@ -26,6 +26,37 @@ class DPGRedirector:
     def flush(self):
         pass  # Método necessário para compatibilidade com sys.stdout
 
+
+class Cache:
+    def __init__(self,size,algorithm,asc):
+        self.size = size
+        self.algorithm = algorithm
+        self.asc = asc
+
+class CacheMultinivel:
+    def __init__(self):
+        self.cache_list:list[Cache] = []
+
+    def add_cache(self,cache:Cache):
+        self.cache_list.append(cache)
+
+    def update_cache(self,sender:str):
+        level = int(sender[-1])
+        if sender.startswith('tamanho_cache'): self.cache_list[level].size = dpg.get_value(sender)
+        if sender.startswith('associatividade'): self.cache_list[level].algorithm = dpg.get_value(sender)
+        if sender.startswith('combo_algoritmo'): self.cache_list[level].asc = dpg.get_value(sender)
+
+    def delete_cache(self):
+        self.cache_list.pop()
+
+    def display(self):
+        for i,cache in enumerate(self.cache_list):
+            print(f'- L{i} -')
+            print(f'---- size: {cache.size} ')
+            print(f'---- algorithm: {cache.algorithm}')
+            print(f'---- asc: {cache.asc}')
+
+
 # Lista global para armazenar tags de séries de plotagem (caso visualizações sejam usadas)
 plot_series_tags = []
 
@@ -475,21 +506,106 @@ sys.stdout = DPGRedirector("Resumo")  # Redireciona todos os prints
 # Pega a resolução da tela
 # viewport_width, viewport_height = dpg.get_viewport_client_width(), dpg.get_viewport_client_height()
 
+asc = 16
+def set_associatividade(sender,app_data,mult=False):
+    global asc
+    if app_data > asc:
+        asc *=2
+        dpg.set_value(sender,asc)
+    else:
+        asc /=2
+        dpg.set_value(sender,asc)
+    if mult: update_cache(sender)
+        
+
+
+
+
+
+
+cache_multinivel = CacheMultinivel()
+cache_multinivel.add_cache(Cache(8192,'FIFO',16))
+
+nivel_cache = 1
+stack_cache = []
+def delete_cache():
+    global nivel_cache
+    if stack_cache:
+        dpg.delete_item(stack_cache.pop())
+        cache_multinivel.delete_cache()
+        nivel_cache -=1
+
+def add_cache(grp):
+    global nivel_cache
+    with dpg.group(parent=grp) as cache:
+        dpg.add_separator(parent=cache)
+        dpg.add_text(f"Configuração Cache L{nivel_cache}",parent=cache)
+        dpg.add_input_int(
+            label=f"Tamanho Cache (Bytes) - L{nivel_cache}", default_value=8192, tag=f"tamanho_cache_L{nivel_cache}",width=200,
+            callback=update_cache,
+            parent=cache
+        )
+        dpg.add_input_int(
+            label=f"Associatividade - L{nivel_cache}", default_value=16, tag=f"associatividade_L{nivel_cache}", width=200,
+            callback=lambda sender,app_data: set_associatividade(sender,app_data,mult=True),
+            parent=cache
+        )
+        dpg.add_combo(
+            items=["FIFO", "LRU", "LFU", "Random"],
+            default_value='FIFO', label=f"Algoritmo de Substituição - L{nivel_cache}", width=100, tag=f"combo_algoritmo_L{nivel_cache}",
+            callback=update_cache,
+            parent=cache
+        )
+    stack_cache.append(cache)
+    nivel_cache +=1
+    cache_multinivel.add_cache(Cache(8192,'FIFO',16))
+    
+
+def update_cache(sender):
+    cache_multinivel.update_cache(sender)
+    cache_multinivel.display()
+
 
 with dpg.window(label="Simulação de Cache", width=1400, height=900):
-    dpg.add_input_int(label="Memory Size", default_value=1048576, tag="memory_size", width=200)
-    dpg.add_input_int(label="Acessos", default_value=10000, tag="acessos", width=200)
-    dpg.add_input_int(label="Tamanho Cache (Bytes)", default_value=8192, tag="tamanho_cache", width=200)
-    dpg.add_input_int(label="Associatividade", default_value=16, tag="associatividade", width=200)
-    dpg.add_input_int(label="N Simulações", default_value=10, tag="n_simulacoes", width=200)
-    
-    dpg.add_separator()
-    dpg.add_input_float(label="Probabilidade Temporal", default_value=0.2, tag="prob_temporal", width=200)
-    dpg.add_input_float(label="Probabilidade Espacial", default_value=0.2, tag="prob_espacial", width=200)
-    dpg.add_input_float(label="Probabilidade Região Quente", default_value=0.4, tag="prob_quente", width=200)
-    
-    dpg.add_separator()
-    dpg.add_input_text(label="Tamanhos de Bloco", default_value="2,4,8,16,32,64,128,256,512", tag="blocos", width=400)
+    with dpg.tab_bar(tag="tab_bar"):
+        with dpg.tab(label="Cache Única", tag="cache_unica_tab"):
+            dpg.add_input_int(label="Memory Size", default_value=1048576, tag="memory_size", width=200)
+            dpg.add_input_int(label="Acessos", default_value=10000, tag="acessos", width=200)
+            dpg.add_input_int(label="Tamanho Cache (Bytes)", default_value=8192, tag="tamanho_cache", width=200)
+            dpg.add_input_int(label="Associatividade", default_value=16, tag="associatividade", width=200,callback=set_associatividade)
+            dpg.add_input_int(label="N Simulações", default_value=10, tag="n_simulacoes", width=200)
+            
+            dpg.add_separator()
+            dpg.add_input_float(label="Probabilidade Temporal", default_value=0.2, tag="prob_temporal", width=200)
+            dpg.add_input_float(label="Probabilidade Espacial", default_value=0.2, tag="prob_espacial", width=200)
+            dpg.add_input_float(label="Probabilidade Região Quente", default_value=0.4, tag="prob_quente", width=200)
+            
+            dpg.add_separator()
+            dpg.add_input_text(label="Tamanhos de Bloco", default_value="2,4,8,16,32,64,128,256,512", tag="blocos", width=400)
+
+        with dpg.tab(label="Cache Multinível", tag="cache_multinivel_tab"):
+            with dpg.child_window(autosize_x=True, height=200, horizontal_scrollbar=False) as scroll:
+                dpg.add_input_int(label="Memory Size", default_value=16777216, tag="memory_size_multi", width=200)  # 16MB (2^24)
+                dpg.add_input_int(label="Acessos", default_value=50000, tag="acessos_multi", width=200)  # Mais acessos para multinível
+                dpg.add_input_int(label="N Simulações", default_value=5, tag="n_simulacoes_multi", width=200)  # Menos simulações (mais lento)
+
+                dpg.add_separator()
+                dpg.add_text("Configuração Cache L0")
+                dpg.add_input_int(label="Tamanho Cache (Bytes) - L0", default_value=8192, tag="tamanho_cache_L0", width=200,callback=update_cache)
+                dpg.add_input_int(
+                    label="Associatividade - L0", default_value=16, tag="associatividade_L0", width=200,
+                    callback=lambda sender,app_data: set_associatividade(sender,app_data,mult=True)
+                )
+                dpg.add_combo(
+                    items=["FIFO", "LRU", "LFU", "Random"],
+                    default_value='FIFO', label="Algoritmo de Substituição - L0", width=100, tag="combo_algoritmo_L0",
+                    callback=update_cache
+                )
+
+                with dpg.group() as container: pass
+                dpg.add_button(label="Add Cache +", callback=lambda: add_cache(container))
+                dpg.add_button(label="Del Cache X", callback=delete_cache)
+
 
     with dpg.group(horizontal=True):  # Inicia um grupo horizontal
         dpg.add_button(label="Simular", callback=rodar_simulacao_callback)
@@ -497,7 +613,7 @@ with dpg.window(label="Simulação de Cache", width=1400, height=900):
         dpg.add_button(label="Limpar Plots", callback= limpar_plots)
         dpg.add_progress_bar(tag="barra", default_value=0.0, width=300)
         dpg.add_text("0% concluído", tag="texto")
-		# Combobox escolha do algoritmo de substituição
+        # Combobox escolha do algoritmo de substituição
         # dpg.add_text("Algoritmo de Substituição:")		
         dpg.add_combo(items=["FIFO", "LRU", "LFU", "Random"], default_value='FIFO', label="<-- Algoritmo de Substituição", width=100, tag="combo_algoritmo",callback=selecionar_algoritmo)
         # Salvar Grafico está com erro!!!
@@ -505,20 +621,20 @@ with dpg.window(label="Simulação de Cache", width=1400, height=900):
         dpg.add_button(label="Mostrar Heatmap", callback=mapa_temporal_blocos)
     dpg.add_separator()
     dpg.add_input_text(label="<-- Resultado da Última Simulação", multiline=True, readonly=True, height=35, tag="resultados_box")
-	
+    
     dpg.add_separator()
     dpg.add_text("", tag="mensagem_erro")
-    dpg.add_separator()
-
+    dpg.add_separator()      
     with dpg.group(horizontal=True):  # Inicia um grupo horizontal
         with dpg.plot(label="Taxa de acerto vs Tamanho do Bloco", tag="plot", height=380, width=600):
             dpg.add_plot_legend()
             x_axis = dpg.add_plot_axis(dpg.mvXAxis, label="Tamanho do Bloco", tag="x_axis")
             y_axis = dpg.add_plot_axis(dpg.mvYAxis, label="Taxa de Acerto", tag="y_axis")
-        dpg.add_input_text(label="<-- Resumo da Simulação", multiline=True, readonly=True, height=380, width=360, default_value="", tag="Resumo")
+        dpg.add_input_text(label="<-- Resumo da Simulação", multiline=True, readonly=True, height=380, width=360, default_value="", tag="Resumo")  
 
 
-dpg.create_viewport(title='Simulação de Cache', width=800, height=600)
+
+dpg.create_viewport(title='Simulação de Cache', width=800, height=900)
 dpg.setup_dearpygui()
 dpg.maximize_viewport()
 dpg.show_viewport()
