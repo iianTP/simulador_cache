@@ -10,7 +10,7 @@ import csv                             # Para leitura/escrita de arquivos CSV
 import dearpygui.dearpygui as dpg     # Biblioteca GUI para interface gráfica
 import time, sys, os                   # Utilitários do sistema e tempo
 from datetime import datetime          # Para manipulação de datas e horários
-
+#from cache_multiacesso import Cache,CacheMultinivel
 # ------------------------------------------------------------------------------
 # Redirecionador de saída padrão (print) para uma tag do DearPyGUI
 class DPGRedirector:
@@ -27,34 +27,7 @@ class DPGRedirector:
         pass  # Método necessário para compatibilidade com sys.stdout
 
 
-class Cache:
-    def __init__(self,size,algorithm,asc):
-        self.size = size
-        self.algorithm = algorithm
-        self.asc = asc
 
-class CacheMultinivel:
-    def __init__(self):
-        self.cache_list:list[Cache] = []
-
-    def add_cache(self,cache:Cache):
-        self.cache_list.append(cache)
-
-    def update_cache(self,sender:str):
-        level = int(sender[-1])
-        if sender.startswith('tamanho_cache'): self.cache_list[level].size = dpg.get_value(sender)
-        if sender.startswith('associatividade'): self.cache_list[level].algorithm = dpg.get_value(sender)
-        if sender.startswith('combo_algoritmo'): self.cache_list[level].asc = dpg.get_value(sender)
-
-    def delete_cache(self):
-        self.cache_list.pop()
-
-    def display(self):
-        for i,cache in enumerate(self.cache_list):
-            print(f'- L{i} -')
-            print(f'---- size: {cache.size} ')
-            print(f'---- algorithm: {cache.algorithm}')
-            print(f'---- asc: {cache.asc}')
 
 
 # Lista global para armazenar tags de séries de plotagem (caso visualizações sejam usadas)
@@ -472,7 +445,7 @@ def atualizar_plot():
         return
 
     # dpg.delete_item("plot_series", children_only=True)
-    tamanhos, taxas = zip(*resultados)
+    tamanhos, taxas = zip(*cache_multinivel.resultados)
 
     # Calcula log2 dos tamanhos
     tamanhos_log2 = [math.log2(tam) for tam in tamanhos]
@@ -523,6 +496,371 @@ def set_associatividade(sender,app_data,mult=False):
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+class Cache:
+    def __init__(self,size,algorithm,asc):
+        self.size = size
+        self.algorithm = algorithm
+        self.asc = asc
+        self.hits = 0
+        self.misses = 0
+        self.storage = None
+        self.hit_log = []
+
+class CacheMultinivel:
+    def __init__(self):
+        self.cache_list:list[Cache] = []
+        self.memory_size = 16777216
+        self.accesses = 50000
+        self.n_simulations = 5
+        self.prob_temp = 0.200
+        self.prob_esp = 0.200
+        self.prob_hot = 0.400
+        self.blocks = [2,4,8,16,32,64,128,256,512]
+        self.simulate_alg = {
+            'FIFO': self.simulate_FIFO,
+            'LRU': self.simulate_LRU,
+            'LFU': self.simulate_LFU,
+            'Random': self.simulate_RANDOM
+        }
+        self.hot_spots = [
+            64, 1024, 8192, 32768, 131072, 262144, 524288, 786432, 983040
+        ]
+        self.resultados = []
+
+    def add_cache(self,cache:Cache):
+        self.cache_list.append(cache)
+
+    def update_cache(self,sender:str,app_data):
+       
+        match sender:
+            case 'memory_size_multi':
+                self.memory_size = app_data
+                return
+            case 'acessos_multi':
+                self.accesses = app_data
+                return
+            case 'n_simulacoes_multi':
+                self.n_simulations = app_data
+                return
+            case 'prob_temporal_multi':
+                self.prob_temp = app_data
+                return
+            case 'prob_espacial_multi':
+                self.prob_esp = app_data
+                return
+            case 'prob_quente_multi':
+                self.prob_hot = app_data
+                return
+            case 'blocos_multi':
+                self.blocks = [int(b.strip()) for b in app_data.split(",")]
+                return
+        level = int(sender[-1])
+        if sender.startswith('tamanho_cache'):
+            self.cache_list[level].size = app_data
+            return
+        if sender.startswith('associatividade'):
+            self.cache_list[level].algorithm = app_data
+            return
+        if sender.startswith('combo_algoritmo'):
+            self.cache_list[level].asc = app_data
+            return
+
+    def delete_cache(self):
+        self.cache_list.pop()
+
+    def display(self):
+        for i,cache in enumerate(self.cache_list):
+            print(f'- L{i} -')
+            print(f'---- size: {cache.size} ')
+            print(f'---- algorithm: {cache.algorithm}')
+            print(f'---- asc: {cache.asc}')
+
+        # Simulação de cache com política de substituição FIFO
+    def simulate_FIFO(self,curr_cache:Cache, padrao_acesso, cache_lines, bloco_tamanho, level=0,start=0):
+        
+        associatividade, storage, hit_log = curr_cache.asc, curr_cache.storage, curr_cache.hit_log
+
+        num_conjuntos = cache_lines // associatividade
+        cache = storage if storage else [[] for _ in range(num_conjuntos)]  # Lista de conjuntos de cache
+        conjunto_log = []
+
+        for i,endereco in enumerate(padrao_acesso[start:]):
+            bloco = endereco // bloco_tamanho
+            conjunto = bloco % num_conjuntos
+            conjunto_atual = cache[conjunto]
+
+            if bloco in conjunto_atual:
+     
+                hit_log.append(1)
+            else:
+
+                hit_log.append(0)
+
+                if level < len(self.cache_list)-1:
+                    #print(endereco,level,len(self.cache_list))
+                    next_cache = self.cache_list[level+1]
+                    next_cache_lines = next_cache.size // bloco_tamanho
+                    self.simulate_alg[next_cache.algorithm](next_cache, padrao_acesso, next_cache_lines, bloco_tamanho, level+1,start=start+i)
+
+                if len(conjunto_atual) < associatividade:
+                    conjunto_atual.append(bloco)
+                else:
+                    conjunto_atual.pop(0)  # Remove o mais antigo
+                    conjunto_atual.append(bloco)
+
+            conjunto_log.append(conjunto)
+
+        return conjunto_log
+
+    # ------------------------------------------------------------------------------
+    # Simulação de cache com política de substituição LRU (Least Recently Used)
+    def simulate_LRU(self, curr_cache: Cache, padrao_acesso, cache_lines, bloco_tamanho, level=0):
+        print('LRU')
+        associatividade, storage, hit_log = curr_cache.asc, curr_cache.storage, curr_cache.hit_log
+
+        num_conjuntos = cache_lines // associatividade
+        cache = storage if storage else [deque() for _ in range(num_conjuntos)]
+        hits, misses = 0, 0
+        conjunto_log = []
+
+        for endereco in padrao_acesso:
+            bloco = endereco // bloco_tamanho
+            conjunto = bloco % num_conjuntos
+            conjunto_atual = cache[conjunto]
+
+            if bloco in conjunto_atual:
+                hits += 1
+                hit_log.append(1)
+                conjunto_atual.remove(bloco)      # Remove e reinsere no fim (mais recente)
+                conjunto_atual.append(bloco)
+            else:
+                misses += 1
+                hit_log.append(0)
+
+                if level < len(self.cache_list):
+                    next_cache = self.cache_list[level]
+                    next_cache_lines = next_cache.size // bloco_tamanho
+                    self.simulate_alg[next_cache.algorithm](next_cache, padrao_acesso, next_cache_lines, bloco_tamanho, level+1)
+
+                if len(conjunto_atual) >= associatividade:
+                    conjunto_atual.popleft()      # Remove o menos recentemente usado
+                conjunto_atual.append(bloco)
+
+            conjunto_log.append(conjunto)
+
+        return conjunto_log
+
+    # ------------------------------------------------------------------------------
+    # Simulação de cache com política de substituição LFU (Least Frequently Used)
+    def simulate_LFU(self, curr_cache:Cache,padrao_acesso, cache_lines, bloco_tamanho, level=0):
+        print('LFU')
+        associatividade, storage, hit_log = curr_cache.asc, curr_cache.storage, curr_cache.hit_log
+
+        num_conjuntos = cache_lines // associatividade
+        cache = storage if storage else  [{} for _ in range(num_conjuntos)]  # Dict: bloco -> frequência
+        hits, misses = 0, 0
+        conjunto_log = []
+
+        for endereco in padrao_acesso:
+            bloco = endereco // bloco_tamanho
+            conjunto = bloco % num_conjuntos
+            conjunto_atual = cache[conjunto]
+
+            if bloco in conjunto_atual:
+                hits += 1
+                hit_log.append(1)
+                conjunto_atual[bloco] += 1
+            else:
+                misses += 1
+                hit_log.append(0)
+                
+                if level < len(self.cache_list):
+                    next_cache = self.cache_list[level]
+                    next_cache_lines = next_cache.size // bloco_tamanho
+                    self.simulate_alg[next_cache.algorithm](next_cache, padrao_acesso, next_cache_lines, bloco_tamanho, level+1)
+
+                if len(conjunto_atual) < associatividade:
+                    conjunto_atual[bloco] = 1
+                else:
+                    bloco_remover = min(conjunto_atual, key=conjunto_atual.get)
+                    del conjunto_atual[bloco_remover]
+                    conjunto_atual[bloco] = 1
+
+            conjunto_log.append(conjunto)
+
+        return conjunto_log
+
+    # ------------------------------------------------------------------------------
+    # Simulação de cache com política de substituição aleatória (RANDOM)
+    def simulate_RANDOM(self,curr_cache:Cache,padrao_acesso, cache_lines, bloco_tamanho, level=0):
+        print('RANDOM')
+        associatividade, storage, hit_log = curr_cache.asc, curr_cache.storage, curr_cache.hit_log
+
+        num_conjuntos = cache_lines // associatividade
+        cache = storage if storage else  [[] for _ in range(num_conjuntos)]
+        hits, misses = 0, 0
+        conjunto_log = []
+
+        for endereco in padrao_acesso:
+            bloco = endereco // bloco_tamanho
+            conjunto = bloco % num_conjuntos
+            conjunto_atual = cache[conjunto]
+
+            if bloco in conjunto_atual:
+                hits += 1
+                hit_log.append(1)
+            else:
+                misses += 1
+                hit_log.append(0)
+                
+                if level < len(self.cache_list):
+                    next_cache = self.cache_list[level]
+                    next_cache_lines = next_cache.size // bloco_tamanho
+                    self.simulate_alg[next_cache.algorithm](next_cache, padrao_acesso, next_cache_lines, bloco_tamanho, level+1)
+
+                if len(conjunto_atual) < associatividade:
+                    conjunto_atual.append(bloco)
+                else:
+                    idx_remover = random.randint(0, associatividade - 1)
+                    conjunto_atual[idx_remover] = bloco
+
+            conjunto_log.append(conjunto)
+
+        return conjunto_log
+
+    
+    def simulate(self):
+
+        self.resultados.clear()
+        contador_barra = 0
+        progresso = 0.01		# Mostra um andamento mínimo na barra de progresso para indicar que a nova simulação iniciou
+        dpg.set_value("barra", progresso)
+        dpg.set_value("texto", "Simulação Iniciada")
+        for block in self.blocks:
+            contador_barra += 1		
+            progresso = contador_barra / len(self.blocks) 
+            curr_cache = self.cache_list[0]
+            cache_lines = curr_cache.size // block
+            taxas_acerto = self.simulate_monte_carlo(
+                curr_cache,
+                cache_lines,
+                block
+            )
+            dpg.set_value("barra", progresso)
+            dpg.set_value("texto", f"{int(progresso*100)}% concluído")
+            self.resultados.append((block, taxas_acerto))
+            dpg.split_frame()  # Permite que a interface atualize
+
+        if self.resultados:
+            tamanhos, taxas = zip(*self.resultados)
+            texto = f"Tamanhos_de_bloco = [{', '.join(str(int(t)) for t in tamanhos)}];\n"
+            texto += f"Taxa_media_de_acerto = [{', '.join(f'{float(t):.6f}' for t in taxas)}];"
+        
+            # Atualiza o conteúdo da caixa de texto na interface
+            dpg.set_value("resultados_box", texto)
+
+        return
+    
+    def simulate_monte_carlo(self,cache:Cache,cache_lines, bloco_tamanho):
+        taxas_acerto = []
+        hits_totais = []
+        misses_totais = []
+        probs = [self.prob_temp,self.prob_esp,self.prob_hot]
+        for _ in range(self.n_simulations):
+            padrao = gerar_padrao_realista(self.accesses, self.memory_size, self.hot_spots, *probs, bloco_tamanho)
+            
+            # Seleciona e executa o algoritmo de substituição
+            self.simulate_alg[cache.algorithm](cache, padrao, cache_lines, bloco_tamanho)
+
+            hits, misses, taxa_acerto = self.calc_hits()
+            self.clear_hits()
+            
+            # Armazena resultados desta simulação
+            taxas_acerto.append(taxa_acerto)
+            hits_totais.append(hits)
+            misses_totais.append(misses)
+
+        # Exibe estatísticas gerais
+        print(f"--- Resultados: {self.accesses} Acessos - Bloco de {bloco_tamanho} ---\n")
+        print(f"Média da Taxa de Acerto: {np.mean(taxas_acerto):.2f}")
+        print(f"Desvio Padrão da Taxa de Acerto: {np.std(taxas_acerto):.2f}")
+        print(f"Máximo: {max(taxas_acerto):.2f}, Mínimo: {min(taxas_acerto):.2f}")
+
+        # Parte do plot do mapa de acessos. COmentada porque NÃO FUNCIONA!!!!!
+            # if i == 0:
+                # mapa_temporal_blocos(padrao, memory_size, bloco_tamanho, resolucao_temporal=100)
+
+        print(f"--- Resultados: {self.accesses} Acessos - Bloco de {bloco_tamanho} ---\n")
+        print(f"Média da Taxa de Acerto: {np.mean(taxas_acerto):.4f}")
+        print(f"Desvio padrão da Taxa de Acerto: {np.std(taxas_acerto):.4f}\n")   # print(f"Total médio de acessos: {acessos}")
+
+        return np.mean(taxas_acerto)
+    
+    def calc_hits(self):
+        hits = sum([sum(cache.hit_log) for cache in self.cache_list])
+        misses = len(self.cache_list[0].hit_log) - hits
+        taxa_acerto = hits / len(self.cache_list[0].hit_log)
+        return hits, misses, taxa_acerto
+
+    def clear_hits(self):
+        for cache in self.cache_list:
+            cache.hit_log = []
+
+    def run_simulation(self):
+
+        if not (2**20 <= self.memory_size <= 2**30) or (self.memory_size & (self.memory_size-1)) != 0:
+            dpg.set_value("mensagem_erro", "Erro: Memory Size deve ser potência de 2 entre 2^20 e 2^30.")
+            return
+        for cache in self.cache_list:
+            if not is_power_of_two(cache.asc):
+                dpg.set_value("mensagem_erro", "Erro: Associatividade deve ser potência de 2 maior que zero.")
+                return
+
+            if (cache.size & (cache.size-1)) != 0 or cache.size >= self.memory_size:
+                dpg.set_value("mensagem_erro", "Erro: Tamanho da Cache deve ser potência de 2 e menor que Memory Size.")
+                return
+
+            for bloco in self.blocks:
+                if bloco <= 0 or bloco >= self.memory_size or not is_power_of_two(bloco):
+                    dpg.set_value("mensagem_erro", f"Tamanho do Bloco deve ser potência de 2 e menor que Memory Size. Valor fornecido: {bloco}")
+                    return
+                cache_lines = cache.size // bloco
+                num_conjuntos = cache_lines // cache.asc
+                if num_conjuntos < 1:
+                    dpg.set_value("mensagem_erro", f"Erro: Associatividade {cache.asc} inválida para bloco {bloco}.")
+                    return
+
+        if not (0 <= self.prob_temp <= 1) or not (0 <= self.prob_esp <= 1) or not (0 <= self.prob_hot <= 1):
+            dpg.set_value("mensagem_erro", "Erro: Probabilidades devem ser entre 0 e 1.")
+            return
+        
+        self.simulate()
+
+
+
+
+
+
+
+
+
 cache_multinivel = CacheMultinivel()
 cache_multinivel.add_cache(Cache(8192,'FIFO',16))
 
@@ -542,7 +880,7 @@ def add_cache(grp):
         dpg.add_text(f"Configuração Cache L{nivel_cache}",parent=cache)
         dpg.add_input_int(
             label=f"Tamanho Cache (Bytes) - L{nivel_cache}", default_value=8192, tag=f"tamanho_cache_L{nivel_cache}",width=200,
-            callback=update_cache,
+            callback=cache_multinivel.update_cache,
             parent=cache
         )
         dpg.add_input_int(
@@ -553,7 +891,7 @@ def add_cache(grp):
         dpg.add_combo(
             items=["FIFO", "LRU", "LFU", "Random"],
             default_value='FIFO', label=f"Algoritmo de Substituição - L{nivel_cache}", width=100, tag=f"combo_algoritmo_L{nivel_cache}",
-            callback=update_cache,
+            callback=cache_multinivel.update_cache,
             parent=cache
         )
     stack_cache.append(cache)
@@ -565,6 +903,9 @@ def update_cache(sender):
     cache_multinivel.update_cache(sender)
     cache_multinivel.display()
 
+def run_multi():
+    cache_multinivel.run_simulation()
+    atualizar_plot()
 
 with dpg.window(label="Simulação de Cache", width=1400, height=900):
     with dpg.tab_bar(tag="tab_bar"):
@@ -583,32 +924,44 @@ with dpg.window(label="Simulação de Cache", width=1400, height=900):
             dpg.add_separator()
             dpg.add_input_text(label="Tamanhos de Bloco", default_value="2,4,8,16,32,64,128,256,512", tag="blocos", width=400)
 
+
+
         with dpg.tab(label="Cache Multinível", tag="cache_multinivel_tab"):
             with dpg.child_window(autosize_x=True, height=200, horizontal_scrollbar=False) as scroll:
-                dpg.add_input_int(label="Memory Size", default_value=16777216, tag="memory_size_multi", width=200)  # 16MB (2^24)
-                dpg.add_input_int(label="Acessos", default_value=50000, tag="acessos_multi", width=200)  # Mais acessos para multinível
-                dpg.add_input_int(label="N Simulações", default_value=5, tag="n_simulacoes_multi", width=200)  # Menos simulações (mais lento)
+                dpg.add_input_int(label="Memory Size", default_value=16777216, tag="memory_size_multi", width=200, callback=cache_multinivel.update_cache)  # 16MB (2^24)
+                dpg.add_input_int(label="Acessos", default_value=50000, tag="acessos_multi", width=200, callback=cache_multinivel.update_cache)  # Mais acessos para multinível
+                dpg.add_input_int(label="N Simulações", default_value=5, tag="n_simulacoes_multi", width=200, callback=cache_multinivel.update_cache)  # Menos simulações (mais lento)
 
                 dpg.add_separator()
                 dpg.add_text("Configuração Cache L0")
-                dpg.add_input_int(label="Tamanho Cache (Bytes) - L0", default_value=8192, tag="tamanho_cache_L0", width=200,callback=update_cache)
+                dpg.add_input_int(label="Tamanho Cache (Bytes) - L0", default_value=8192, tag="tamanho_cache_L0", width=200,callback=cache_multinivel.update_cache)
                 dpg.add_input_int(
                     label="Associatividade - L0", default_value=16, tag="associatividade_L0", width=200,
-                    callback=lambda sender,app_data: set_associatividade(sender,app_data,mult=True)
+                    callback=cache_multinivel.update_cache
                 )
                 dpg.add_combo(
                     items=["FIFO", "LRU", "LFU", "Random"],
                     default_value='FIFO', label="Algoritmo de Substituição - L0", width=100, tag="combo_algoritmo_L0",
-                    callback=update_cache
+                    callback=cache_multinivel.update_cache
                 )
 
                 with dpg.group() as container: pass
                 dpg.add_button(label="Add Cache +", callback=lambda: add_cache(container))
                 dpg.add_button(label="Del Cache X", callback=delete_cache)
 
+                dpg.add_separator()
+                dpg.add_input_float(label="Probabilidade Temporal", default_value=0.2, tag="prob_temporal_multi", width=200,callback=cache_multinivel.update_cache)
+                dpg.add_input_float(label="Probabilidade Espacial", default_value=0.2, tag="prob_espacial_multi", width=200,callback=cache_multinivel.update_cache)
+                dpg.add_input_float(label="Probabilidade Região Quente", default_value=0.4, tag="prob_quente_multi", width=200,callback=cache_multinivel.update_cache)
+                
+                dpg.add_separator()
+                dpg.add_input_text(label="Tamanhos de Bloco", default_value="2,4,8,16,32,64,128,256,512", tag="blocos_multi", width=400,callback=cache_multinivel.update_cache)
+
+
+
 
     with dpg.group(horizontal=True):  # Inicia um grupo horizontal
-        dpg.add_button(label="Simular", callback=rodar_simulacao_callback)
+        dpg.add_button(label="Simular", callback=run_multi)#rodar_simulacao_callback)
         dpg.add_button(label="Limpar Último", callback=limpar_ultimo_plot)
         dpg.add_button(label="Limpar Plots", callback= limpar_plots)
         dpg.add_progress_bar(tag="barra", default_value=0.0, width=300)
