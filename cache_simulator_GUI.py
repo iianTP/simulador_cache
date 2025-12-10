@@ -717,7 +717,7 @@ def rodar_cmn():
     resultados.clear()
     for bloco_tamanho in [int(t.strip()) for t in dpg.get_value('blocos_multi').split(',')]:
         rodar_simulacao_multinivel_callback(bloco_tamanho)
-    atualizar_plot()
+    atualizar_plot(True)
 
 # Função para executar simulação de cache multinível
 def rodar_simulacao_multinivel_callback(bloco_tamanho):
@@ -960,10 +960,10 @@ def close_callback():
 # ------------------------------------------------------------------------------
 # Adicione estas funções antes da criação da interface:
 
-def atualizar_plot():
+def atualizar_plot(m=False):
     """Atualiza o gráfico com os resultados da simulação"""
     global plot_series_tags
-    
+
     # Verifica se o eixo existe antes de usar
     if not dpg.does_item_exist("y_axis"):
         print("Erro: 'y_axis' não existe.")
@@ -999,15 +999,26 @@ def atualizar_plot():
         # Cria uma nova série para o plot
         plot_series = f"plot_{len(plot_series_tags)}"
         plot_series_tags.append(plot_series)
-        
-        dpg.add_line_series(
-            tamanhos_log2,
-            list(taxas),  # Converte para lista para garantir compatibilidade
-            label=f"{algoritmo_escolhido}",
-            parent="y_axis",
-            tag=plot_series,
-            show=True
-        )
+
+        algoritmos = [dpg.get_value(f"algoritmo_L{lvl}") for lvl in range(1,nivel_cache)]
+        if m:
+            dpg.add_line_series(
+                tamanhos_log2,  # X: log2 do tamanho do bloco
+                list(taxas),     # Y: taxa de acerto do L1
+                label=f"Multi: {'-'.join(algoritmos)}",
+                parent="y_axis",
+                tag=plot_series,
+                show=True
+            )
+        else:
+            dpg.add_line_series(
+                tamanhos_log2,
+                list(taxas),  # Converte para lista para garantir compatibilidade
+                label=f"{algoritmo_escolhido}",
+                parent="y_axis",
+                tag=plot_series,
+                show=True
+            )
         
         # Atualiza os limites dos eixos
         dpg.fit_axis_data("x_axis")
